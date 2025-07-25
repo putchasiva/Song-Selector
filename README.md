@@ -1,1 +1,1 @@
-# Song-Selector
+This was coded in Javascript, HTML, and CSS. Basically what this website does it that you put in your mood, the type of music that you want to litsen too, and another "vibe" preference for the music (Instrumental, Fammiliar Music etc.) and it reccomends you a song that you can preview in youtube by clicking on a button and you can add songs to favorites based on how you like them.
