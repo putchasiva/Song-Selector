@@ -1,0 +1,2052 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sonic Mood Recommender</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;700&family=Montserrat:wght@400;700&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script type="module">
+        
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, addDoc, query, getDocs, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        let app, db, auth;
+
+        
+        if (Object.keys(firebaseConfig).length > 0) {
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            window.firebaseApp = app;
+            window.firebaseDb = db;
+            window.firebaseAuth = auth;
+            window.appId = appId;
+            window.initialAuthToken = initialAuthToken;
+            window.firestoreDoc = doc;
+            window.firestoreGetDoc = getDoc;
+            window.firestoreSetDoc = setDoc;
+            window.firestoreUpdateDoc = updateDoc;
+            window.firestoreCollection = collection;
+            window.firestoreAddDoc = addDoc;
+            window.firestoreQuery = query;
+            window.firestoreGetDocs = getDocs;
+            window.firestoreDeleteDoc = deleteDoc;
+            window.firestoreOnSnapshot = onSnapshot; 
+
+            
+            onAuthStateChanged(auth, async (user) => {
+                if (!user) {
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                            console.log("Signed in with custom token successfully.");
+                        } else {
+                            await signInAnonymously(auth);
+                            console.log("Signed in anonymously.");
+                        }
+                    } catch (error) {
+                        console.error("Firebase authentication error:", error);
+                    }
+                }
+                window.dispatchEvent(new Event('firebaseAuthReady'));
+            });
+        } else {
+            console.warn("Firebase config not found. Data persistence will not work.");
+            
+            window.dispatchEvent(new Event('firebaseAuthReady'));
+        }
+    </script>
+    <style>
+        
+        :root {
+            --color-primary: #4CAF50; 
+            --color-secondary: #8BC34A; 
+            --color-accent-orange: #FFEB3B; 
+            --color-accent-pink: #FF5722; 
+            --color-dark-bg: #1a1a2e;
+            --color-dark-panel: #2a2a4a;
+            --color-light-text: #e0e0e0;
+            --color-dim-text: #bbbbbb;
+            --color-border: #4a4a70;
+            --color-input-bg: #3a3a5a;
+            --color-button-hover: #66BB6A; 
+            --color-button-active: #388E3C; 
+            --color-success: #28a745;
+            --color-danger: #dc3545;
+            --color-warning: #ffc107;
+            --color-song-details: #90CAF9; 
+            --color-tooltip-bg: rgba(0, 0, 0, 0.8);
+            --color-tooltip-text: #ffffff;
+        }
+       
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(45deg, #4CAF50, #8BC34A, #FFEB3B, #FF5722, #4CAF50);
+            background-size: 400% 400%;
+            animation: gradientBackground 15s ease infinite;
+            color: var(--color-light-text);
+            font-family: 'Roboto', sans-serif;
+            overflow: hidden;
+            padding: 0;
+            box-sizing: border-box;
+            position: relative;
+        }
+        
+        @keyframes gradientBackground {
+            0% { background-position: 0% 50%; }
+            25% { background-position: 50% 100%; }
+            50% { background-position: 100% 50%; }
+            75% { background-position: 50% 0%; }
+            100% { background-position: 0% 50%; }
+        }
+        
+        #three-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+            pointer-events: none; 
+        }
+
+        .app-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            z-index: 1;
+        }
+  
+        .step-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+            background-color: transparent;
+            transition: transform 0.7s cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 0.7s ease-in-out;
+            transform: translateX(100%); 
+            opacity: 0;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        .step-container.active {
+            transform: translateX(0); 
+            opacity: 1;
+            pointer-events: all;
+            z-index: 2;
+        }
+        
+        .step-container.previous {
+            transform: translateX(-100%);
+            opacity: 0;
+        }
+
+        
+        .container {
+            background-color: var(--color-dark-panel);
+            border: 2px solid var(--color-primary);
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 30px rgba(var(--color-primary), 0.5) inset;
+            padding: 30px;
+            max-width: 900px;
+            width: 90%;
+            max-height: 90%;
+            overflow-y: auto;
+            text-align: center;
+            backdrop-filter: blur(5px); 
+            -webkit-backdrop-filter: blur(5px);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        
+        h1 {
+            font-family: 'Montserrat', sans-serif;
+            color: var(--color-secondary);
+            font-size: 2.8em;
+            margin-bottom: 25px;
+            text-shadow: 0 0 12px rgba(139, 195, 74, 0.8), 0 0 20px rgba(139, 195, 74, 0.4);
+        }
+        
+        .input-section {
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            flex-grow: 1;
+            align-content: center;
+        }
+        
+        .input-group {
+            background-color: var(--color-input-bg);
+            padding: 20px;
+            border-radius: 10px;
+            border: 1px solid var(--color-border);
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.4);
+            text-align: left;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .input-group:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .input-group label {
+            display: block;
+            font-size: 1.1em;
+            color: var(--color-accent-orange);
+            margin-bottom: 10px;
+            font-weight: bold;
+            font-family: 'Montserrat', sans-serif;
+            text-shadow: 0 0 5px rgba(255, 235, 59, 0.5);
+            position: relative; 
+        }
+        
+        .tooltip {
+            position: absolute;
+            background-color: var(--color-tooltip-bg);
+            color: var(--color-tooltip-text);
+            padding: 8px 12px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            white-space: nowrap;
+            z-index: 10;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease-in-out;
+            bottom: 100%; 
+            left: 50%;
+            transform: translateX(-50%) translateY(-10px); 
+        }
+
+        .tooltip::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 100%; 
+            transform: translateX(-50%);
+            border-width: 6px;
+            border-style: solid;
+            border-color: var(--color-tooltip-bg) transparent transparent transparent;
+        }
+
+        .input-group label:hover .tooltip {
+            opacity: 1;
+            transform: translateX(-50%) translateY(-15px); 
+        }
+       
+        select {
+            width: 100%;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid var(--color-border);
+            background-color: #4a4a6a;
+            color: var(--color-light-text);
+            font-size: 1.2em;
+            font-weight: bold;
+            -webkit-appearance: none; 
+            -moz-appearance: none;
+            appearance: none;
+            cursor: pointer;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+            background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23e0e0e0%22%20d%3D%22M287%2069.4a17.6%2017.6%201%200%200-13-5.4H18.4c-6.5%200-12.3%203.2-16.2%208.1-3.9%204.9-4.8%2011.5-2.9%2017.7l139.7%20228.4c4.6%207.5%2012.3%2012%2020.9%2012s16.3-4.5%2020.9-12L290.9%2090.8c1.9-6.2%201-12.8-2.9-17.7z%22%2F%3E%3C%2Fsvg%3E'); 
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            background-size: 0.8em;
+            padding-right: 30px;
+        }
+        select:focus {
+            outline: none;
+            border-color: var(--color-secondary);
+            box-shadow: 0 0 0 3px rgba(139, 195, 74, 0.5);
+        }
+        
+        .checkbox-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+       
+        .checkbox-group label {
+            background-color: #5a5a7a;
+            padding: 8px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease, box-shadow 0.2s ease;
+            font-size: 0.9em;
+            color: var(--color-light-text);
+            border: 1px solid transparent;
+            display: inline-flex;
+            align-items: center;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            display: none; 
+        }
+
+        .checkbox-group input[type="checkbox"]:checked + label {
+            background-color: var(--color-primary);
+            border-color: var(--color-secondary);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4), 0 0 10px rgba(139, 195, 74, 0.6);
+        }
+
+        .checkbox-group label:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+        }
+        
+        .navigation-buttons {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+            gap: 15px;
+        }
+
+        .navigation-buttons button {
+            flex: 1;
+            margin: 0;
+            padding: 15px 25px;
+            font-size: 1.1em;
+        }
+        
+        button {
+            background: linear-gradient(45deg, var(--color-primary), var(--color-secondary));
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.2em;
+            font-family: 'Montserrat', sans-serif;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.5);
+            margin-top: 20px;
+            background-size: 200% auto;
+        }
+
+        button:hover {
+            background-position: right center;
+            transform: translateY(-3px) scale(1.02);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6), 0 0 20px rgba(var(--color-secondary), 0.7);
+        }
+
+        button:active {
+            transform: translateY(0);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            background-color: var(--color-button-active);
+        }
+        
+        .recommendation-output {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 1px dashed var(--color-border);
+            text-align: center;
+            animation: slideInUp 0.7s ease-out forwards;
+            opacity: 0;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        @keyframes slideInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .recommendation-output h3 {
+            font-family: 'Montserrat', sans-serif;
+            color: var(--color-secondary);
+            font-size: 1.8em;
+            margin-bottom: 15px;
+            text-shadow: 0 0 8px rgba(139, 195, 74, 0.6);
+        }
+        
+        .song-card {
+            background-color: #3a3a5a;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 15px;
+            border: 1px solid var(--color-border);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            width: 100%;
+            max-width: 580px;
+        }
+
+        .song-card:hover {
+            transform: scale(1.01);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.5);
+        }
+
+        .song-title-box {
+            background-color: var(--color-input-bg);
+            padding: 15px 20px;
+            border-radius: 10px;
+            border: 1px solid var(--color-secondary);
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+            width: calc(100% - 40px);
+            margin-bottom: 15px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+
+        .song-title-box h4 {
+            font-family: 'Montserrat', sans-serif;
+            color: var(--color-accent-orange);
+            font-size: 2em;
+            margin: 0;
+            text-shadow: 0 0 8px rgba(255, 235, 59, 0.7);
+        }
+     
+        .song-details p {
+            color: var(--color-song-details); 
+            font-size: 1.1em; 
+            font-family: 'Open Sans', sans-serif; 
+            margin: 5px 0 10px;
+        }
+
+        .song-card .reasoning {
+            font-style: italic;
+            color: var(--color-secondary);
+            font-size: 0.9em;
+            margin-top: 10px;
+            text-shadow: 0 0 3px rgba(139, 195, 74, 0.3);
+        }
+        
+        .feedback-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .feedback-buttons button {
+            padding: 10px 20px;
+            font-size: 1em;
+            margin: 0;
+            border-radius: 8px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+            transition: all 0.2s ease;
+        }
+
+        .feedback-buttons button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 12px rgba(0, 0, 0, 0.4);
+        }
+        
+        #loading-indicator {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid var(--color-secondary);
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #user-id-display {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            font-size: 0.8em;
+            color: var(--color-dim-text);
+            background-color: rgba(0, 0, 0, 0.3);
+            padding: 5px 10px;
+            border-radius: 5px;
+            z-index: 10;
+        }
+        
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(3px);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background-color: var(--color-dark-panel);
+            padding: 30px;
+            border-radius: 15px;
+            border: 2px solid var(--color-secondary);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            transform: scale(0.9);
+            opacity: 0;
+            animation: modalAppear 0.3s forwards cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        @keyframes modalAppear {
+            to { transform: scale(1); opacity: 1; }
+        }
+
+        .modal-content h3 {
+            color: var(--color-accent-orange);
+            margin-top: 0;
+            font-size: 1.6em;
+        }
+
+        .modal-content p {
+            color: var(--color-light-text);
+            margin-bottom: 25px;
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+
+        .modal-buttons button {
+            padding: 10px 20px;
+            font-size: 1em;
+            margin: 0;
+            flex: 1;
+        }
+
+        .modal-buttons button.confirm {
+            background-color: var(--color-danger);
+        }
+
+        .modal-buttons button.cancel {
+            background-color: var(--color-primary);
+        }
+
+        
+        #step-settings .input-group {
+            margin-bottom: 15px;
+        }
+
+        #step-settings .input-group label {
+            margin-bottom: 5px;
+        }
+
+        
+        .song-navigation-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .song-navigation-buttons button {
+            padding: 10px 20px;
+            font-size: 1em;
+            margin: 0;
+        }
+        
+        .list-container {
+            text-align: left;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid var(--color-border);
+            border-radius: 10px;
+            padding: 10px;
+            background-color: var(--color-input-bg);
+        }
+
+        .list-container h4 {
+            color: var(--color-secondary);
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 1.4em;
+            text-align: center;
+        }
+
+        .list-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 15px;
+            border-bottom: 1px dashed var(--color-border);
+            color: var(--color-light-text);
+        }
+
+        .list-item:last-child {
+            border-bottom: none;
+        }
+
+        .list-item span {
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+
+        .list-item button {
+            padding: 5px 10px;
+            font-size: 0.8em;
+            margin: 0;
+            background: var(--color-danger);
+            border-radius: 5px;
+        }
+
+        .list-item button:hover {
+            background: #e74c3c;
+        }
+
+        
+        .listen-now-button {
+            background: linear-gradient(45deg, #007bff, #0056b3); 
+            color: white;
+            padding: 12px 25px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-family: 'Montserrat', sans-serif;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.4);
+            margin-top: 15px;
+            background-size: 200% auto;
+        }
+
+        .listen-now-button:hover {
+            background-position: right center;
+            transform: translateY(-2px) scale(1.01);
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.5);
+        }
+
+        .listen-now-button:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+
+
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+                width: 95%;
+                max-height: 95%;
+            }
+            h1 {
+                font-size: 2em;
+            }
+            .input-section {
+                grid-template-columns: 1fr;
+            }
+            .input-group {
+                padding: 15px;
+            }
+            button {
+                font-size: 1em;
+                padding: 12px 25px;
+            }
+            .song-card {
+                flex-direction: column;
+            }
+            .navigation-buttons {
+                flex-direction: column;
+            }
+            .modal-content {
+                padding: 20px;
+            }
+            .list-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 5px;
+            }
+            .list-item button {
+                width: 100%;
+                margin-top: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="three-canvas"></canvas>
+    <div class="app-container">
+        
+        <div id="step-1" class="step-container active">
+            <div class="container">
+                <h1>How are you feeling?</h1>
+                <div class="input-section">
+                    <div class="input-group">
+                        <label for="mood-selector" data-tooltip="Select the primary mood you want your music to reflect.">
+                            Select your current mood:
+                            <span class="tooltip">Select the primary mood you want your music to reflect.</span>
+                        </label>
+                        <select id="mood-selector">
+                            <option value="happy">Happy</option>
+                            <option value="energized">Energized</option>
+                            <option value="relaxed">Relaxed</option>
+                            <option value="focused">Focused</option>
+                            <option value="sad">Sad</option>
+                            <option value="nostalgic">Nostalgic</option>
+                            <option value="romantic">Romantic</option>
+                            <option value="adventurous">Adventurous</option>
+                            <option value="confident">Confident</option>
+                            <option value="angry">Angry</option>
+                            <option value="yolo">YOLO (Random!)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="navigation-buttons">
+                    <button id="next-step-1">Next</button>
+                </div>
+            </div>
+        </div>
+
+        
+        <div id="step-2" class="step-container">
+            <div class="container">
+                <h1>Tell us about your music taste!</h1>
+                <div class="input-section">
+                    <div class="input-group">
+                        <label data-tooltip="Choose one or more genres to narrow down your recommendations.">
+                            Genre Preferences (Optional):
+                            <span class="tooltip">Choose one or more genres to narrow down your recommendations.</span>
+                        </label>
+                        <div class="checkbox-group" id="genre-checkboxes">
+                            <input type="checkbox" id="genre-pop" value="Pop"><label for="genre-pop">Pop</label>
+                            <input type="checkbox" id="genre-rock" value="Rock"><label for="genre-rock">Rock</label>
+                            <input type="checkbox" id="genre-electronic" value="Electronic"><label for="genre-electronic">Electronic</label>
+                            <input type="checkbox" id="genre-classical" value="Classical"><label for="genre-classical">Classical</label>
+                            <input type="checkbox" id="genre-hiphop" value="Hip Hop"><label for="genre-hiphop">Hip Hop</label>
+                            <input type="checkbox" id="genre-jazz" value="Jazz"><label for="genre-jazz">Jazz</label>
+                            <input type="checkbox" id="checkbox-rnb" value="R&B"><label for="checkbox-rnb">R&B</label>
+                            <input type="checkbox" id="genre-rap" value="Rap"><label for="genre-rap">Rap</label>
+                            <input type="checkbox" id="genre-folk" value="Folk"><label for="genre-folk">Folk</label>
+                            <input type="checkbox" id="genre-metal" value="Metal"><label for="genre-metal">Metal</label>
+                            <input type="checkbox" id="genre-blues" value="Blues"><label for="genre-blues">Blues</label>
+                            <input type="checkbox" id="genre-indie" value="Indie"><label for="genre-indie">Indie</label>
+                            <input type="checkbox" id="genre-soul" value="Soul"><label for="genre-soul">Soul</label>
+                            <input type="checkbox" id="genre-edm" value="EDM"><label for="genre-edm">EDM</label>
+                            <input type="checkbox" id="genre-country" value="Country"><label for="genre-country">Country</label>
+                            <input type="checkbox" id="genre-funk" value="Funk"><label for="genre-funk">Funk</label>
+                        </div>
+                        <button id="clear-genres-button">Clear All Genres</button>
+                    </div>
+                </div>
+                <div class="navigation-buttons">
+                    <button id="prev-step-2">Previous</button>
+                    <button id="next-step-2">Next</button>
+                </div>
+            </div>
+        </div>
+
+        
+        <div id="step-3" class="step-container">
+            <div class="container">
+                <h1>Refine your vibe and get your song!</h1>
+                <div class="input-section">
+                    <div class="input-group">
+                        <label data-tooltip="Select additional tags to fine-tune the feel of your recommended music.">
+                            Vibe Tags (Optional):
+                            <span class="tooltip">Select additional tags to fine-tune the feel of your recommended music.</span>
+                        </label>
+                        <div class="checkbox-group" id="vibe-checkboxes">
+                            <input type="checkbox" id="vibe-instrumental" value="instrumental"><label for="vibe-instrumental">Instrumental</label>
+                            <input type="checkbox" id="vibe-vocal" value="vocal"><label for="vibe-vocal">Vocal</label>
+                            <input type="checkbox" id="vibe-upbeat" value="upbeat"><label for="vibe-upbeat">Upbeat</label>
+                            <input type="checkbox" id="vibe-calming" value="calming"><label for="vibe-calming">Calming</label>
+                            <input type="checkbox" id="vibe-driving" value="driving_beat"><label for="vibe-driving">Driving Beat</label>
+                            <input type="checkbox" id="vibe-lyrical_focus" value="lyrical_focus"><label for="vibe-lyrical_focus">Lyrical Focus</label>
+                        </div>
+                        <button id="clear-vibe-tags-button">Clear All Vibe Tags</button>
+                    </div>
+                </div>
+                <div class="navigation-buttons">
+                    <button id="prev-step-3">Previous</button>
+                    <button id="find-song-button">Find My Song!</button>
+                </div>
+            </div>
+        </div>
+
+        
+        <div id="step-4" class="step-container">
+            <div class="container">
+                <h1>Your Sonic Recommendation!</h1>
+                <div id="loading-indicator">
+                    <p style="color: var(--color-secondary); font-size: 1.2em;">Finding your perfect song...</p>
+                    <div class="spinner"></div>
+                </div>
+                <div id="recommendation-output" class="recommendation-output">
+                    <p>Click "Find My Song!" to get a recommendation.</p>
+                </div>
+                <div class="song-navigation-buttons">
+                    <button id="prev-song-button" style="display: none;">Previous Song</button>
+                    <button id="next-song-button" style="display: none;">Next Song</button>
+                </div>
+                <div class="navigation-buttons">
+                    <button id="start-over-button">Start Over</button>
+                    <button id="go-to-settings-from-step4">Settings</button>
+                </div>
+            </div>
+        </div>
+
+       
+        <div id="step-5" class="step-container">
+            <div class="container">
+                <h1>Settings & Your Library</h1>
+                <div class="input-section" id="step-settings">
+                    <div class="input-group">
+                        <label for="default-mood-selector">Set Default Starting Mood:</label>
+                        <select id="default-mood-selector">
+                            <option value="none">None (Ask every time)</option>
+                            <option value="happy">Happy</option>
+                            <option value="energized">Energized</option>
+                            <option value="relaxed">Relaxed</option>
+                            <option value="focused">Focused</option>
+                            <option value="sad">Sad</option>
+                            <option value="nostalgic">Nostalgic</option>
+                            <option value="romantic">Romantic</option>
+                            <option value="adventurous">Adventurous</option>
+                            <option value="confident">Confident</option>
+                            <option value="angry">Angry</option>
+                            <option value="yolo">YOLO (Random!)</option>
+                        </select>
+                        <button id="save-settings-button">Save Settings</button>
+                    </div>
+                    <div class="input-group">
+                        <label>Your Favorite Songs:</label>
+                        <div id="favorites-list" class="list-container">
+                            <p style="text-align: center; color: var(--color-dim-text);">No favorites yet.</p>
+                        </div>
+                    </div>
+
+                    <div class="input-group">
+                        <label>Recommendation History (Last 20):</label>
+                        <div id="history-list" class="list-container">
+                            <p style="text-align: center; color: var(--color-dim-text);">No history yet.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="navigation-buttons">
+                    <button id="back-from-settings">Back to Main</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+   
+    <div id="custom-modal-overlay" class="modal-overlay">
+        <div class="modal-content">
+            <h3 id="modal-title"></h3>
+            <p id="modal-message"></p>
+            <div class="modal-buttons">
+                <button id="modal-confirm-button" class="confirm">Confirm</button>
+                <button id="modal-cancel-button" class="cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    
+    <div id="user-id-display" style="display: none;">
+        User ID: <span id="current-user-id">Loading...</span>
+    </div>
+    <script>
+        console.log("Script started.");
+
+        
+        const moodSelector = document.getElementById('mood-selector');
+        const findSongButton = document.getElementById('find-song-button');
+        const recommendationOutput = document.getElementById('recommendation-output');
+        const genreCheckboxesContainer = document.getElementById('genre-checkboxes');
+        const vibeCheckboxesContainer = document.getElementById('vibe-checkboxes');
+        const loadingIndicator = document.getElementById('loading-indicator');
+
+        
+        const nextStep1Btn = document.getElementById('next-step-1');
+        const prevStep2Btn = document.getElementById('prev-step-2');
+        const nextStep2Btn = document.getElementById('next-step-2');
+        const prevStep3Btn = document.getElementById('prev-step-3');
+        const startOverBtn = document.getElementById('start-over-button');
+        const goToSettingsFromStep4Btn = document.getElementById('go-to-settings-from-step4');
+        const backFromSettingsBtn = document.getElementById('back-from-settings');
+
+        const prevSongButton = document.getElementById('prev-song-button');
+        const nextSongButton = document.getElementById('next-song-button');
+
+        
+        const customModalOverlay = document.getElementById('custom-modal-overlay');
+        const modalTitle = document.getElementById('modal-title');
+        const modalMessage = document.getElementById('modal-message');
+        const modalConfirmButton = document.getElementById('modal-confirm-button');
+        const modalCancelButton = document.getElementById('modal-cancel-button');
+
+        
+        const currentUserIdSpan = document.getElementById('current-user-id');
+        const userIdDisplay = document.getElementById('user-id-display');
+
+        
+        const step1 = document.getElementById('step-1');
+        const step2 = document.getElementById('step-2');
+        const step3 = document.getElementById('step-3');
+        const step4 = document.getElementById('step-4');
+        const step5 = document.getElementById('step-5'); 
+        const steps = [step1, step2, step3, step4, step5];
+
+        
+        const defaultMoodSelector = document.getElementById('default-mood-selector');
+        const saveSettingsButton = document.getElementById('save-settings-button');
+        const favoritesList = document.getElementById('favorites-list');
+        const historyList = document.getElementById('history-list');
+
+        
+        const clearGenresButton = document.getElementById('clear-genres-button');
+        const clearVibeTagsButton = document.getElementById('clear-vibe-tags-button');
+
+        
+        let currentStepIndex = 0;
+        let firebaseApp, firebaseDb, firebaseAuth, currentAppId, currentUserId;
+        let firestoreDoc, firestoreGetDoc, firestoreSetDoc, firestoreUpdateDoc, firestoreCollection, firestoreAddDoc, firestoreQuery, firestoreGetDocs, firestoreDeleteDoc, firestoreOnSnapshot;
+        let userPreferences = {
+            mood: 'happy',
+            genres: [],
+            vibeTags: [],
+            defaultMood: 'none'
+        };
+        let currentRecommendedSongs = []; 
+        let currentRecommendationDisplayIndex = 0; 
+        let userFavorites = []; 
+        let recommendationHistory = []; 
+
+        
+        let scene, camera, renderer, particlesMesh;
+        let mouseX = 0, mouseY = 0;
+        let windowHalfX = window.innerWidth / 2;
+        let windowHalfY = window.innerHeight / 2;
+
+        
+        const moodParameters = {
+            'happy': { color: 0xFFEB3B, count: 1000, speed: 0.005, size: 0.1 }, 
+            'energized': { color: 0xFF5722, count: 1500, speed: 0.01, size: 0.15 }, 
+            'relaxed': { color: 0x8BC34A, count: 500, speed: 0.002, size: 0.05 },
+            'focused': { color: 0x4CAF50, count: 700, speed: 0.003, size: 0.08 }, 
+            'sad': { color: 0x708090, count: 600, speed: 0.003, size: 0.08 }, 
+            'nostalgic': { color: 0x9932CC, count: 800, speed: 0.004, size: 0.1 }, 
+            'romantic': { color: 0xFF69B4, count: 750, speed: 0.004, size: 0.1 }, 
+            'adventurous': { color: 0x54A0FF, count: 1200, speed: 0.007, size: 0.12 },
+            'confident': { color: 0x000000, count: 900, speed: 0.006, size: 0.1, opacity: 0.8 }, 
+            'angry': { color: 0xDC3545, count: 1300, speed: 0.008, size: 0.15 }, 
+            'yolo': { color: 0xFFFFFF, count: 1500, speed: 0.015, size: 0.18 } 
+        };
+
+        
+        function initThreeJS() {
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 5;
+
+            renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('three-canvas'), alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+
+            createParticles(moodParameters[moodSelector.value]);
+
+            document.addEventListener('mousemove', onDocumentMouseMove, false);
+            document.addEventListener('touchmove', onDocumentTouchMove, false);
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        
+        function createParticles(params) {
+            if (particlesMesh) {
+                scene.remove(particlesMesh);
+                particlesMesh.geometry.dispose();
+                particlesMesh.material.dispose();
+            }
+            const geometry = new THREE.BufferGeometry();
+            const positions = [];
+            const colors = [];
+            const color = new THREE.Color(params.color);
+
+            for (let i = 0; i < params.count; i++) {   
+                positions.push(Math.random() * 10 - 5); 
+                positions.push(Math.random() * 10 - 5); 
+                positions.push(Math.random() * 10 - 5); 
+                colors.push(color.r, color.g, color.b);
+            }
+
+            geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size: params.size,
+                vertexColors: true,
+                transparent: true,
+                opacity: params.opacity || 1.0,
+                blending: THREE.AdditiveBlending,
+                sizeAttenuation: true
+            });
+            particlesMesh = new THREE.Points(geometry, material);
+            scene.add(particlesMesh);
+        }
+
+        
+        function animateThreeJS() {
+            requestAnimationFrame(animateThreeJS);
+
+            
+            particlesMesh.rotation.x += 0.0005 * moodParameters[moodSelector.value].speed * 100;
+            particlesMesh.rotation.y += 0.0005 * moodParameters[moodSelector.value].speed * 100;
+
+            
+            camera.position.x += (mouseX / windowHalfX * 2 - camera.position.x) * 0.05;
+            camera.position.y += (-mouseY / windowHalfY * 2 - camera.position.y) * 0.05;
+            camera.lookAt(scene.position);
+
+            renderer.render(scene, camera);
+        }
+
+        
+        function onWindowResize() {
+            windowHalfX = window.innerWidth / 2;
+            windowHalfY = window.innerHeight / 2;
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+       
+        function onDocumentMouseMove(event) {
+            mouseX = event.clientX - windowHalfX;
+            mouseY = event.clientY - windowHalfY;
+        }
+
+      
+        function onDocumentTouchMove(event) {
+            if (event.touches.length === 1) {
+                event.preventDefault();
+                mouseX = event.touches[0].pageX - windowHalfX;
+                mouseY = event.touches[0].pageY - windowHalfY;
+            }
+        }
+
+       
+
+        const USER_DATA_COLLECTION = 'userPreferences';
+        const FAVORITES_COLLECTION = 'favorites';
+        const HISTORY_COLLECTION = 'recommendationHistory';
+
+        
+        function showStep(stepToShow) {
+            console.log("showStep() called for:", stepToShow.id, "Current step index before update:", currentStepIndex);
+            steps.forEach((step, index) => {
+                if (step === stepToShow) {
+                    step.classList.add('active');
+                    step.classList.remove('previous');
+                    currentStepIndex = index;
+                } else {
+                    if (steps.indexOf(stepToShow) > index) {
+                         step.classList.add('previous');
+                    } else {
+                         step.classList.remove('previous');
+                    }
+                    step.classList.remove('active');
+                }
+            });
+            console.log("showStep() completed. New current step index:", currentStepIndex);
+            const activeContainer = stepToShow.querySelector('.container');
+            if (activeContainer) {
+                activeContainer.scrollTop = 0; 
+            }
+        }
+
+        
+        function nextStep() {
+            console.log("nextStep() called. Current step index:", currentStepIndex);
+            if (currentStepIndex < steps.length - 1) {
+                showStep(steps[currentStepIndex + 1]);
+            } else {
+                console.log("Already at the last step.");
+            }
+        }
+
+        
+        function prevStep() {
+            console.log("prevStep() called. Current step index:", currentStepIndex);
+            if (currentStepIndex > 0) {
+                showStep(steps[currentStepIndex - 1]);
+            } else {
+                console.log("Already at the first step.");
+            }
+        }
+
+        let resolveModalPromise; 
+        
+        function showCustomModal(title, message, showCancel = false) {
+            modalTitle.textContent = title;
+            modalMessage.textContent = message;
+            modalCancelButton.style.display = showCancel ? 'inline-block' : 'none';
+            customModalOverlay.style.display = 'flex';
+            return new Promise((resolve) => {
+                resolveModalPromise = resolve;
+            });
+        }
+
+        
+        modalConfirmButton.addEventListener('click', () => {
+            customModalOverlay.style.display = 'none';
+            if (resolveModalPromise) {
+                resolveModalPromise(true);
+            }
+        });
+
+        modalCancelButton.addEventListener('click', () => {
+            customModalOverlay.style.display = 'none';
+            if (resolveModalPromise) {
+                resolveModalPromise(false);
+            }
+        });
+
+       
+        async function getUserData() {
+            if (!firebaseDb || !currentUserId || !firestoreDoc || !firestoreGetDoc) {
+                console.warn("Firebase not initialized or user not authenticated or Firestore functions not available. Cannot get user preferences.");
+                return;
+            }
+            try {
+                const userDocRef = firestoreDoc(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${USER_DATA_COLLECTION}`, 'preferences');
+                const docSnap = await firestoreGetDoc(userDocRef);
+                if (docSnap.exists()) {
+                    userPreferences = { ...userPreferences, ...docSnap.data() };
+                    
+                    delete userPreferences.artists;
+                    console.log("User preferences loaded:", userPreferences);
+                    
+                    moodSelector.value = userPreferences.mood;
+                    defaultMoodSelector.value = userPreferences.defaultMood || 'none'; 
+                    userPreferences.genres.forEach(genre => {
+                        const checkbox = document.getElementById(`genre-${genre.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
+                        if (checkbox) checkbox.checked = true;
+                    });
+                    userPreferences.vibeTags.forEach(tag => {
+                        const checkbox = document.getElementById(`vibe-${tag}`);
+                        if (checkbox) checkbox.checked = true;
+                    });
+                } else {
+                    console.log("No user preferences found in Firestore, using default settings.");
+                }
+            } catch (e) {
+                console.error("Error getting user data from Firestore:", e);
+            }
+        }
+
+        
+        async function saveUserPreferences() {
+            if (!firebaseDb || !currentUserId || !firestoreDoc || !firestoreSetDoc) {
+                console.warn("Firebase not initialized or user not authenticated or Firestore functions not available. Cannot save user preferences.");
+                return;
+            }
+            try {
+                const userDocRef = firestoreDoc(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${USER_DATA_COLLECTION}`, 'preferences');
+                const preferencesToSave = { ...userPreferences };
+                delete preferencesToSave.artists;
+                await firestoreSetDoc(userDocRef, preferencesToSave, { merge: true });
+                console.log("User preferences saved successfully to Firestore.");
+                await showCustomModal("Settings Saved", "Your preferences have been saved!", false);
+            } catch (e) {
+                console.error("Error saving user preferences to Firestore:", e);
+                await showCustomModal("Error", "Failed to save preferences. Please try again.", false);
+            }
+        }
+
+        
+        function getSelectedGenres() {
+            return Array.from(genreCheckboxesContainer.querySelectorAll('input[type="checkbox"]:checked'))
+                        .map(checkbox => checkbox.value);
+        }
+
+        
+        function getSelectedVibeTags() {
+            return Array.from(vibeCheckboxesContainer.querySelectorAll('input[type="checkbox"]:checked'))
+                        .map(checkbox => checkbox.value);
+        }
+
+       
+        async function findSongRecommendation() {
+            loadingIndicator.style.display = 'block';
+            recommendationOutput.innerHTML = '';
+            recommendationOutput.style.opacity = 0;
+            prevSongButton.style.display = 'none';
+            nextSongButton.style.display = 'none';
+
+            const selectedMood = moodSelector.value;
+            const selectedGenres = getSelectedGenres();
+            const selectedVibeTags = getSelectedVibeTags();
+
+            let foundSongs = [];
+            const MAX_RECOMMENDATIONS = 3; 
+
+            
+            const getRandomSubset = (arr, count) => {
+                const shuffled = [...arr].sort(() => 0.5 - Math.random());
+                return shuffled.slice(0, count);
+            };
+
+            const hasSelectedMood = selectedMood !== 'none';
+            const hasSelectedGenre = selectedGenres.length > 0;
+            const hasSelectedVibe = selectedVibeTags.length > 0;
+
+            
+            if (selectedMood === 'yolo') {
+                foundSongs = getRandomSubset(songs, songs.length);
+            } else {
+                
+                const createTierFilter = (requireMood, requireGenre, requireVibe) => (song) => {
+                    let match = true;
+
+                    if (requireMood && hasSelectedMood) {
+                        if (!song.moods.includes(selectedMood)) {
+                            match = false;
+                        }
+                    } else if (requireMood && !hasSelectedMood) {
+                        return false; 
+                    }
+
+                    if (requireGenre && hasSelectedGenre) {
+                        if (!selectedGenres.some(genre => song.genres.includes(genre))) {
+                            match = false;
+                        }
+                    } else if (requireGenre && !hasSelectedGenre) {
+                        return false; 
+                    }
+
+                    if (requireVibe && hasSelectedVibe) {
+                        if (!selectedVibeTags.some(tag => song.vibe_tags.includes(tag))) {
+                            match = false;
+                        }
+                    } else if (requireVibe && !hasSelectedVibe) {
+                        return false; 
+                    }
+
+
+                    if (!requireMood && !requireGenre && !requireVibe) {
+                        return true;
+                    }
+
+                    return match;
+                };
+
+                
+                const tiers = [];
+
+                
+                if (hasSelectedMood && hasSelectedGenre && hasSelectedVibe) {
+                    tiers.push({
+                        name: "Exact Match (Mood, Genre, Vibe)",
+                        filter: createTierFilter(true, true, true)
+                    });
+                }
+
+                
+                if (hasSelectedMood && hasSelectedGenre) {
+                    tiers.push({ name: "Mood + Genre", filter: createTierFilter(true, true, false) });
+                }
+                if (hasSelectedMood && hasSelectedVibe) {
+                    tiers.push({ name: "Mood + Vibe", filter: createTierFilter(true, false, true) });
+                }
+                if (hasSelectedGenre && hasSelectedVibe) {
+                    tiers.push({ name: "Genre + Vibe", filter: createTierFilter(false, true, true) });
+                }
+
+                
+                if (hasSelectedMood) {
+                    tiers.push({ name: "Mood Only", filter: createTierFilter(true, false, false) });
+                }
+                if (hasSelectedGenre) {
+                    tiers.push({ name: "Genre Only", filter: createTierFilter(false, true, false) }); 
+                }
+                if (hasSelectedVibe) {
+                    tiers.push({ name: "Vibe Only", filter: createTierFilter(false, false, true) });
+                }
+
+                
+                tiers.push({
+                    name: "General Recommendation",
+                    filter: () => true
+                });
+
+                
+                let tierUsed = "";
+                for (const tier of tiers) {
+                    const songsInTier = songs.filter(tier.filter);
+                    if (songsInTier.length > 0) {
+                        foundSongs = songsInTier;
+                        tierUsed = tier.name;
+                        break;
+                    }
+                }
+            }
+
+
+            
+            if (foundSongs.length === 0) {
+                recommendationOutput.innerHTML = `<p style="color:var(--color-danger);">No songs found in our database that perfectly match your criteria. We tried our best! Please try adjusting your selections or try again later.</p>`;
+                loadingIndicator.style.display = 'none';
+                recommendationOutput.style.opacity = 1;
+                return;
+            }
+
+            
+            currentRecommendedSongs = getRandomSubset(foundSongs, MAX_RECOMMENDATIONS);
+            currentRecommendationDisplayIndex = 0;
+
+            
+            renderSingleRecommendation(currentRecommendationDisplayIndex);
+            loadingIndicator.style.display = 'none';
+            recommendationOutput.style.opacity = 1;
+
+            
+            if (currentRecommendedSongs.length > 1) {
+                prevSongButton.style.display = 'inline-block';
+                nextSongButton.style.display = 'inline-block';
+            }
+
+            
+            currentRecommendedSongs.forEach(song => addRecommendationToHistory(song));
+        }
+
+        
+        function renderSingleRecommendation(index) {
+            recommendationOutput.innerHTML = '';
+            const song = currentRecommendedSongs[index];
+
+            if (!song) {
+                recommendationOutput.innerHTML = `<p style="color:var(--color-danger);">No song to display at this index.</p>`;
+                prevSongButton.style.display = 'none';
+                nextSongButton.style.display = 'none';
+                return;
+            }
+
+            
+            let listenNowButtonHtml = '';
+            if (song.youtube_link) {
+                listenNowButtonHtml = `
+                    <button class="listen-now-button" data-youtube-link="${song.youtube_link}">
+                        Listen Now
+                    </button>
+                `;
+            }
+
+            const songCardHtml = `
+                <div class="song-card">
+                    <div class="song-title-box">
+                        <h4>${song.title}</h4>
+                    </div>
+                    <div class="song-details">
+                        <p>Artist: ${song.artist}</p>
+                        <p>Album: ${song.album_name || 'N/A'}</p>
+                        <p>Release Year: ${song.release_year || 'N/A'}</p>
+                        <p>Genre(s): ${song.genres.join(', ')}</p>
+                    </div>
+                    <div class="feedback-buttons">
+                        <button class="add-to-favorites-btn" data-song-id="${song.id}" data-song-title="${song.title}" data-song-artist="${song.artist}">
+                            Add to Favorites
+                        </button>
+                    </div>
+                    ${listenNowButtonHtml}
+                </div>
+            `;
+            recommendationOutput.insertAdjacentHTML('beforeend', songCardHtml);
+
+            
+            const addToFavoritesBtn = recommendationOutput.querySelector('.add-to-favorites-btn');
+            if (addToFavoritesBtn) {
+                
+                const isFavoriteOnRender = userFavorites.some(fav => fav.id === song.id);
+                if (isFavoriteOnRender) {
+                    addToFavoritesBtn.textContent = 'Remove from Favorites';
+                    addToFavoritesBtn.classList.add('favorited');
+                } else {
+                    addToFavoritesBtn.textContent = 'Add to Favorites';
+                    addToFavoritesBtn.classList.remove('favorited');
+                }
+
+                addToFavoritesBtn.addEventListener('click', async (event) => {
+                    const songId = event.target.dataset.songId;
+                    const songToAdd = songs.find(s => s.id === songId);
+
+                    if (!songToAdd) {
+                        console.error("Song not found for ID:", songId);
+                        return;
+                    }
+
+                    
+                    const currentlyIsFavorite = userFavorites.some(fav => fav.id === songId);
+
+                    if (currentlyIsFavorite) {
+                        await removeFromFavorites(songId);
+                        event.target.textContent = 'Add to Favorites'; 
+                        event.target.classList.remove('favorited'); 
+                    } else {
+                        await addToFavorites(songToAdd);
+                        event.target.textContent = 'Remove from Favorites'; 
+                        event.target.classList.add('favorited'); 
+                    }
+                });
+            }
+
+            const listenNowBtn = recommendationOutput.querySelector('.listen-now-button');
+            if (listenNowBtn) {
+                listenNowBtn.addEventListener('click', (event) => {
+                    const youtubeLink = event.target.dataset.youtubeLink;
+                    if (youtubeLink) {
+                        window.open(youtubeLink, '_blank');
+                    }
+                });
+            }
+        }
+
+        
+         
+        function getYouTubeVideoId(url) {
+            const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+            const match = url.match(regExp);
+            return (match && match[2].length === 11) ? match[2] : null;
+        }
+
+
+        
+        function showNextSong() {
+            currentRecommendationDisplayIndex++;
+            if (currentRecommendationDisplayIndex >= currentRecommendedSongs.length) {
+                currentRecommendationDisplayIndex = 0;
+            }
+            renderSingleRecommendation(currentRecommendationDisplayIndex);
+        }
+
+        
+        function showPreviousSong() {
+            currentRecommendationDisplayIndex--;
+            if (currentRecommendationDisplayIndex < 0) {
+                currentRecommendationDisplayIndex = currentRecommendedSongs.length - 1;
+            }
+            renderSingleRecommendation(currentRecommendationDisplayIndex);
+        }
+
+        
+        async function addToFavorites(song) {
+            if (!firebaseDb || !currentUserId || !firestoreCollection || !firestoreAddDoc) {
+                console.warn("Firebase not initialized or user not authenticated. Cannot add to favorites.");
+                await showCustomModal("Error", "Cannot save favorites. Please check your connection.", false);
+                return;
+            }
+            try {
+                
+                const existingFavorite = userFavorites.some(fav => fav.id === song.id);
+                if (existingFavorite) {
+                    await showCustomModal("Already Favorited", `"${song.title}" is already in your favorites!`, false);
+                    return;
+                }
+
+                const favoritesColRef = firestoreCollection(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${FAVORITES_COLLECTION}`);
+                
+                await firestoreAddDoc(favoritesColRef, {
+                    id: song.id,
+                    title: song.title,
+                    artist: song.artist,
+                    album_name: song.album_name || '',
+                    release_year: song.release_year || '',
+                    genres: song.genres || [],
+                    timestamp: new Date() 
+                });
+                console.log(`"${song.title}" added to favorites.`);
+                await showCustomModal("Favorite Added", `"${song.title}" by ${song.artist} has been added to your favorites!`, false);
+                
+            } catch (e) {
+                console.error("Error adding to favorites:", e);
+                await showCustomModal("Error", "Failed to add to favorites. Please try again.", false);
+            }
+        }
+
+        
+        async function removeFromFavorites(songId) {
+            if (!firebaseDb || !currentUserId || !firestoreCollection || !firestoreQuery || !firestoreGetDocs || !firestoreDeleteDoc) {
+                console.warn("Firebase not initialized or user not authenticated. Cannot remove from favorites.");
+                await showCustomModal("Error", "Cannot remove favorites. Please check your connection.", false);
+                return;
+            }
+            try {
+                const favoritesColRef = firestoreCollection(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${FAVORITES_COLLECTION}`);
+                const q = firestoreQuery(favoritesColRef); 
+                const querySnapshot = await firestoreGetDocs(q);
+                let docToDelete = null;
+                querySnapshot.forEach((doc) => {
+                    if (doc.data().id === songId) {
+                        docToDelete = doc;
+                    }
+                });
+
+                if (docToDelete) {
+                    await firestoreDeleteDoc(docToDelete.ref);
+                    console.log(`Song with ID ${songId} removed from favorites.`);
+                    await showCustomModal("Favorite Removed", "Song removed from your favorites.", false);
+                    
+                } else {
+                    console.warn(`Song with ID ${songId} not found in favorites.`);
+                    await showCustomModal("Not Found", "That song was not found in your favorites.", false);
+                }
+            } catch (e) {
+                console.error("Error removing from favorites:", e);
+                await showCustomModal("Error", "Failed to remove from favorites. Please try again.", false);
+            }
+        }
+
+        
+        async function loadFavorites() {
+            favoritesList.innerHTML = '<p style="text-align: center; color: var(--color-dim-text);">Loading favorites...</p>';
+            if (!firebaseDb || !currentUserId || !firestoreCollection || !firestoreQuery || !firestoreGetDocs) {
+                console.warn("Firebase not initialized or user not authenticated. Cannot load favorites.");
+                favoritesList.innerHTML = '<p style="text-align: center; color: var(--color-danger);">Cannot load favorites. Please ensure you are signed in.</p>';
+                return;
+            }
+            try {
+                const favoritesColRef = firestoreCollection(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${FAVORITES_COLLECTION}`);
+                const q = firestoreQuery(favoritesColRef);
+                const querySnapshot = await firestoreGetDocs(q);
+                userFavorites = [];
+                querySnapshot.forEach((doc) => {
+                    userFavorites.push({ ...doc.data(), docId: doc.id }); 
+                });
+
+                renderFavoritesList();
+            }
+            catch (e) {
+                console.error("Error loading favorites:", e);
+                favoritesList.innerHTML = '<p style="text-align: center; color: var(--color-danger);">Error loading favorites.</p>';
+            }
+        }
+
+        
+        function renderFavoritesList() {
+            favoritesList.innerHTML = '';
+            if (userFavorites.length === 0) {
+                favoritesList.innerHTML = '<p style="text-align: center; color: var(--color-dim-text);">No favorites yet. Add some from your recommendations!</p>';
+                return;
+            }
+            userFavorites.forEach(song => {
+                const listItem = document.createElement('div');
+                listItem.classList.add('list-item');
+                listItem.innerHTML = `
+                    <span>${song.title} - ${song.artist}</span>
+                    <button class="remove-favorite-btn" data-song-id="${song.id}">Remove</button>
+                `;
+                favoritesList.appendChild(listItem);
+            });
+
+            
+            favoritesList.querySelectorAll('.remove-favorite-btn').forEach(button => {
+                button.addEventListener('click', (event) => {
+                    const songId = event.target.dataset.songId;
+                    removeFromFavorites(songId);
+                });
+            });
+        }
+
+        
+        async function addRecommendationToHistory(song) {
+            if (!firebaseDb || !currentUserId || !firestoreCollection || !firestoreAddDoc || !firestoreQuery || !firestoreGetDocs || !firestoreDeleteDoc) {
+                console.warn("Firebase not initialized or user not authenticated. Cannot add to history.");
+                return;
+            }
+            try {
+                const historyColRef = firestoreCollection(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${HISTORY_COLLECTION}`);
+
+                
+                await firestoreAddDoc(historyColRef, {
+                    id: song.id,
+                    title: song.title,
+                    artist: song.artist,
+                    timestamp: new Date() 
+                });
+
+                
+                const q = firestoreQuery(historyColRef); 
+                const querySnapshot = await firestoreGetDocs(q);
+                let historyDocs = [];
+                querySnapshot.forEach(doc => {
+                    historyDocs.push({ ...doc.data(), docId: doc.id });
+                });
+
+                
+                historyDocs.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
+
+                if (historyDocs.length > 20) {
+                    
+                    for (let i = 20; i < historyDocs.length; i++) {
+                        await firestoreDeleteDoc(firestoreDoc(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${HISTORY_COLLECTION}`, historyDocs[i].docId));
+                    }
+                }
+                console.log(`"${song.title}" added to history.`);
+            } catch (e) {
+                console.error("Error adding to history:", e);
+            }
+        }
+
+        
+        async function loadHistory() {
+            historyList.innerHTML = '<p style="text-align: center; color: var(--color-dim-text);">Loading history...</p>';
+            if (!firebaseDb || !currentUserId || !firestoreCollection || !firestoreQuery || !firestoreGetDocs) {
+                console.warn("Firebase not initialized or user not authenticated. Cannot load history.");
+                historyList.innerHTML = '<p style="text-align: center; color: var(--color-danger);">Cannot load history. Please ensure you are signed in.</p>';
+                return;
+            }
+            try {
+                const historyColRef = firestoreCollection(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${HISTORY_COLLECTION}`);
+                const q = firestoreQuery(historyColRef);
+                const querySnapshot = await firestoreGetDocs(q); 
+                recommendationHistory = [];
+                querySnapshot.forEach((doc) => {
+                    recommendationHistory.push(doc.data());
+                });
+
+                
+                recommendationHistory.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
+
+                renderHistoryList();
+            } catch (e) {
+                console.error("Error loading history:", e);
+                historyList.innerHTML = '<p style="text-align: center; color: var(--color-danger);">Error loading history.</p>';
+            }
+        }
+
+        
+        function renderHistoryList() {
+            historyList.innerHTML = '';
+            if (recommendationHistory.length === 0) {
+                historyList.innerHTML = '<p style="text-align: center; color: var(--color-dim-text);">No recommendation history yet. Find some songs!</p>';
+                return;
+            }
+            recommendationHistory.forEach(song => {
+                const listItem = document.createElement('div');
+                listItem.classList.add('list-item');
+                listItem.innerHTML = `<span>${song.title} - ${song.artist}</span>`;
+                historyList.appendChild(listItem);
+            });
+        }
+
+        
+        function setupTooltips() {
+            document.querySelectorAll('[data-tooltip]').forEach(element => {
+                const tooltipText = element.getAttribute('data-tooltip');
+                const tooltipSpan = document.createElement('span');
+                tooltipSpan.classList.add('tooltip');
+                tooltipSpan.textContent = tooltipText;
+                element.appendChild(tooltipSpan);
+            });
+        }
+
+        
+
+        prevSongButton.addEventListener('click', showPreviousSong);
+        nextSongButton.addEventListener('click', showNextSong);
+
+        nextStep1Btn.addEventListener('click', () => {
+            console.log("Next Step 1 button clicked.");
+            userPreferences.mood = moodSelector.value;
+            
+            createParticles(moodParameters[userPreferences.mood]);
+            nextStep();
+        });
+
+        prevStep2Btn.addEventListener('click', () => {
+            console.log("Previous Step 2 button clicked.");
+            prevStep();
+        });
+
+        nextStep2Btn.addEventListener('click', () => {
+            console.log("Next Step 2 button clicked.");
+            userPreferences.genres = getSelectedGenres();
+            nextStep();
+        });
+
+        prevStep3Btn.addEventListener('click', () => {
+            console.log("Previous Step 3 button clicked.");
+            prevStep();
+        });
+
+        findSongButton.addEventListener('click', () => {
+            console.log("Find My Song button clicked.");
+            userPreferences.vibeTags = getSelectedVibeTags();
+            findSongRecommendation();
+            showStep(step4);
+        });
+
+        startOverBtn.addEventListener('click', async () => {
+            console.log("Start Over button clicked.");
+            const confirmed = await showCustomModal("Confirm Start Over", "Are you sure you want to start over? Your current selections will be cleared.", true);
+            if (confirmed) {
+                showStep(step1);
+               
+                moodSelector.value = userPreferences.defaultMood !== 'none' ? userPreferences.defaultMood : 'happy';
+                genreCheckboxesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+                vibeCheckboxesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+                recommendationOutput.innerHTML = '<p>Click "Find My Song!" to get a recommendation.</p>';
+                prevSongButton.style.display = 'none';
+                nextSongButton.style.display = 'none';
+                
+                createParticles(moodParameters[moodSelector.value]);
+            }
+        });
+
+        goToSettingsFromStep4Btn.addEventListener('click', async () => {
+            console.log("Go to Settings button clicked.");
+            await loadFavorites(); 
+            await loadHistory(); 
+            showStep(step5);
+        });
+
+        backFromSettingsBtn.addEventListener('click', () => {
+            console.log("Back from Settings button clicked.");
+            showStep(step4); 
+        });
+
+        saveSettingsButton.addEventListener('click', async () => {
+            console.log("Save Settings button clicked.");
+            userPreferences.defaultMood = defaultMoodSelector.value;
+            await saveUserPreferences();
+        });
+
+        clearGenresButton.addEventListener('click', () => {
+            genreCheckboxesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+            userPreferences.genres = []; 
+            showCustomModal("Genres Cleared", "All genre selections have been cleared.", false);
+        });
+
+        clearVibeTagsButton.addEventListener('click', () => {
+            vibeCheckboxesContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+            userPreferences.vibeTags = []; 
+            showCustomModal("Vibe Tags Cleared", "All vibe tag selections have been cleared.", false);
+        });
+
+        
+        window.addEventListener('firebaseAuthReady', async () => {
+            console.log("Firebase Auth Ready event fired.");
+            
+            firebaseApp = window.firebaseApp;
+            firebaseDb = window.firebaseDb;
+            firebaseAuth = window.firebaseAuth;
+            currentAppId = window.appId;
+            firestoreDoc = window.firestoreDoc;
+            firestoreGetDoc = window.firestoreGetDoc;
+            firestoreSetDoc = window.firestoreSetDoc;
+            firestoreUpdateDoc = window.firestoreUpdateDoc;
+            firestoreCollection = window.firestoreCollection;
+            firestoreAddDoc = window.firestoreAddDoc;
+            firestoreQuery = window.firestoreQuery;
+            firestoreGetDocs = window.firestoreGetDocs;
+            firestoreDeleteDoc = window.firestoreDeleteDoc;
+            firestoreOnSnapshot = window.firestoreOnSnapshot; 
+
+            if (firebaseAuth && firebaseAuth.currentUser) {
+                currentUserId = firebaseAuth.currentUser.uid;
+                currentUserIdSpan.textContent = currentUserId; 
+                userIdDisplay.style.display = 'block'; 
+                await getUserData(); 
+
+                
+                const favoritesColRef = firestoreCollection(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${FAVORITES_COLLECTION}`);
+                firestoreOnSnapshot(favoritesColRef, (snapshot) => {
+                    userFavorites = [];
+                    snapshot.forEach(doc => userFavorites.push({ ...doc.data(), docId: doc.id }));
+                    renderFavoritesList(); 
+                    
+                    if (currentStepIndex === steps.indexOf(step4) && currentRecommendedSongs.length > 0) {
+                        renderSingleRecommendation(currentRecommendationDisplayIndex);
+                    }
+                });
+
+                const historyColRef = firestoreCollection(firebaseDb, `artifacts/${currentAppId}/users/${currentUserId}/${HISTORY_COLLECTION}`);
+                firestoreOnSnapshot(historyColRef, (snapshot) => {
+                    recommendationHistory = [];
+                    snapshot.forEach(doc => recommendationHistory.push(doc.data()));
+                    recommendationHistory.sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis()); // Sort by most recent
+                    renderHistoryList(); 
+                });
+
+            } else {
+                console.warn("Firebase authentication not fully ready or user not signed in. Functionality may be limited.");
+                currentUserId = "Anonymous"; 
+                currentUserIdSpan.textContent = currentUserId;
+                userIdDisplay.style.display = 'block'; 
+            }
+
+            
+            if (userPreferences.defaultMood && userPreferences.defaultMood !== 'none') {
+                moodSelector.value = userPreferences.defaultMood;
+            } else {
+                moodSelector.value = 'happy'; 
+            }
+            
+            initThreeJS();
+            animateThreeJS();
+            setupTooltips(); 
+        });
+
+        
+        if (!window.firebaseApp) {
+            console.warn("Firebase was not initialized. Running in a limited mode without data persistence.");
+            currentUserId = "No Firebase (Local)";
+            currentUserIdSpan.textContent = currentUserId;
+            userIdDisplay.style.display = 'block'; 
+            
+            window.onload = function() {
+                initThreeJS();
+                animateThreeJS();
+                setupTooltips(); 
+            };
+        }
+
+        
+        let songs = [
+            { id: "s002", title: "Blinding Lights", artist: "The Weeknd", album_name: "After Hours", release_year: 2020, duration_seconds: 200, image_url: "https://placehold.co/150x150/feca57/000000?text=The+Weeknd", genres: ["Pop", "R&B", "Electronic"], moods: ["happy", "energized"], energy_level: 5, vibe_tags: ["vocal", "upbeat", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=XwxLwG2_Sxk" },
+            { id: "s004", title: "Sicko Mode", artist: "Travis Scott", album_name: "ASTROWORLD", release_year: 2018, duration_seconds: 340, image_url: "https://placehold.co/150x150/ff6b6b/ffffff?text=Travis+Scott", genres: ["Hip Hop", "Rap"], moods: ["energized", "angry"], energy_level: 5, vibe_tags: ["vocal", "upbeat", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=f2YWfeFRZO0" },
+            { id: "s006", title: "Holocene", artist: "Bon Iver", album_name: "Bon Iver, Bon Iver", release_year: 2011, duration_seconds: 330, image_url: "https://placehold.co/150x150/1dd1a1/000000?text=Bon+Iver", genres: ["Folk", "Indie"], moods: ["relaxed", "nostalgic"], energy_level: 3, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=-oCPAO3bp4Q" },
+            { id: "s008", title: "Watermelon Sugar", artist: "Harry Styles", album_name: "Fine Line", release_year: 2019, duration_seconds: 175, image_url: "https://placehold.co/150x150/ff9f43/000000?text=Harry+Styles", genres: ["Pop"], moods: ["happy", "energized"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=7-x3uD5z1bQ" },
+            { id: "s009", title: "Master of Puppets", artist: "Metallica", album_name: "Master of Puppets", release_year: 1986, duration_seconds: 515, image_url: "https://placehold.co/150x150/c0392b/ffffff?text=Metallica", genres: ["Metal", "Rock"], moods: ["energized", "angry"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=6xjJ2XIbGRk" },
+            { id: "s010", title: "Thinking Out Loud", artist: "Ed Sheeran", album_name: "x", release_year: 2014, duration_seconds: 280, image_url: "https://placehold.co/150x150/7bed9f/000000?text=Ed+Sheeran", genres: ["Pop", "Folk"], moods: ["relaxed"], energy_level: 1, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=XMPgVZtADtQ" },
+            { id: "s012", title: "The Thrill Is Gone", artist: "B.B. King", album_name: "Completely Well", release_year: 1969, duration_seconds: 330, image_url: "https://placehold.co/150x150/fdcb6e/000000?text=B.B.+King", genres: ["Blues"], moods: ["relaxed", "sad"], energy_level: 3, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=oica5jG7FpU" },
+            { id: "s013", title: "One Dance", artist: "Drake", album_name: "Views", release_year: 2016, duration_seconds: 174, image_url: "https://placehold.co/150x150/00008B/ffffff?text=Drake", genres: ["Hip Hop", "R&B", "Pop"], moods: ["happy", "relaxed", "energized"], energy_level: 3, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=oQDDCgtRzcI" },
+            { id: "s014", title: "Old Town Road", artist: "Lil Nas X", album_name: "7 EP", release_year: 2019, duration_seconds: 113, image_url: "https://placehold.co/150x150/26de81/000000?text=Lil+Nas+X", genres: ["Hip Hop", "Country", "Pop"], moods: ["happy", "energized"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=7UGOIMoJtB4" },
+            { id: "s016", title: "God's Plan", artist: "Drake", album_name: "Scorpion", release_year: 2018, duration_seconds: 198, image_url: "https://placehold.co/150x150/00008B/ffffff?text=Drake+2", genres: ["Hip Hop", "Rap"], moods: ["happy", "energized"], energy_level: 4, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=m1a_GqJf02M" },
+            { id: "s017", title: "Mask Off", artist: "Future", album_name: "FUTURE", release_year: 2017, duration_seconds: 204, image_url: "https://placehold.co/150x150/800080/ffffff?text=Future", genres: ["Hip Hop", "Rap"], moods: ["energized", "angry"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=fjUGC8g4GOE" },
+            { id: "s018", title: "Bohemian Rhapsody", artist: "Queen", album_name: "A Night at the Opera", release_year: 1975, duration_seconds: 355, image_url: "https://placehold.co/150x150/e74c3c/ffffff?text=Queen", genres: ["Rock"], moods: ["energized", "nostalgic"], energy_level: 5, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=yk3prd8GER4" },
+            { id: "s021", title: "Bad Guy", artist: "Billie Eilish", album_name: "When We All Fall Asleep, Where Do We Go?", release_year: 2019, duration_seconds: 194, image_url: "https://placehold.co/150x150/f1c40f/000000?text=Billie+Eilish", genres: ["Pop"], moods: ["sad"], energy_level: 2, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=4-TbQnONe_w" },
+            { id: "s023", title: "HUMBLE.", artist: "Kendrick Lamar", album_name: "DAMN.", release_year: 2017, duration_seconds: 177, image_url: "https://placehold.co/150x150/000000/ffffff?text=Kendrick+Lamar", genres: ["Rap", "Hip Hop"], moods: ["energized", "angry"], energy_level: 5, vibe_tags: ["vocal", "driving_beat", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=ov4WobPqoSA" },
+            { id: "s062", title: "Chanel", artist: "Frank Ocean", album_name: "Chanel (Single)", release_year: 2017, duration_seconds: 200, image_url: "https://placehold.co/150x150/4B0082/ffffff?text=Frank+Ocean", genres: ["R&B", "Soul"], moods: ["relaxed", "romantic"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=XnbsIl2BnWw" },
+            { id: "s063", title: "Stressed Out", artist: "Twenty One Pilots", album_name: "Blurryface", release_year: 2015, duration_seconds: 202, image_url: "https://placehold.co/150x150/2C3E50/ffffff?text=Twenty+One+Pilots", genres: ["Rock", "Pop"], moods: ["focused"], energy_level: 4, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=liTfD88dbCo" },
+            { id: "s066", title: "Shape of You", artist: "Ed Sheeran", album_name: "÷ (Divide)", release_year: 2017, duration_seconds: 233, image_url: "https://placehold.co/150x150/FFD700/000000?text=Ed+Sheeran+3", genres: ["Pop", "R&B"], moods: ["happy", "energized"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=LxxnSDmGUc4" },
+            { id: "s067", title: "Hotline Bling", artist: "Drake", album_name: "Views", release_year: 2015, duration_seconds: 268, image_url: "https://placehold.co/150x150/00008B/ffffff?text=Drake+4", genres: ["Hip Hop", "R&B", "Pop"], moods: ["relaxed", "nostalgic"], energy_level: 3, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=KrsqPE9SMxo" },
+            { id: "s069", title: "Love Story", artist: "Taylor Swift", album_name: "Fearless", release_year: 2008, duration_seconds: 235, image_url: "https://placehold.co/150x150/FF69B4/ffffff?text=Taylor+Swift", genres: ["Pop", "Folk"], moods: ["happy", "romantic", "nostalgic"], energy_level: 3, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=4fWyzwo1xg0" },
+            { id: "s070", title: "The Sound of Silence", artist: "Simon & Garfunkel", album_name: "Wednesday Morning, 3 A.M.", release_year: 1964, duration_seconds: 185, image_url: "https://placehold.co/150x150/8B4513/ffffff?text=Simon+Garfunkel", genres: ["Folk"], moods: ["sad", "relaxed"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=UVQREpxmN_U" },
+            { id: "s071", title: "Happier Than Ever", artist: "Billie Eilish", album_name: "Happier Than Ever", release_year: 2021, duration_seconds: 298, image_url: "https://placehold.co/150x150/2F4F4F/ffffff?text=Billie+Eilish+3", genres: ["Pop"], moods: ["sad"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=rfTgO9rpqck" },
+            { id: "s072", title: "Heat Waves", artist: "Glass Animals", album_name: "Dreamland", release_year: 2020, duration_seconds: 238, image_url: "https://placehold.co/150x150/9932CC/ffffff?text=Glass+Animals", genres: ["Pop", "Indie", "Electronic"], moods: ["relaxed", "nostalgic"], energy_level: 3, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=8WnxCTZNnmg" },
+            { id: "s073", title: "Good Days", artist: "SZA", album_name: "Good Days (Single)", release_year: 2020, duration_seconds: 279, image_url: "https://placehold.co/150x150/9370DB/ffffff?text=SZA+2", genres: ["R&B"], moods: ["relaxed"], energy_level: 2, vibe_tags: ["vocal", "calming"], youtube_link: "https://www.youtube.com/watch?v=mgT0N3tMP74" },
+            { id: "s074", title: "Counting Stars", artist: "OneRepublic", album_name: "Native", release_year: 2013, duration_seconds: 257, image_url: "https://placehold.co/150x150/4682B4/ffffff?text=OneRepublic", genres: ["Pop", "Rock"], moods: ["energized", "happy"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=b7kxtIGaNpw" },
+            { id: "s076", title: "Lose Control", artist: "MEDUZA, Becky Hill, Goodboys", album_name: "Lose Control (Single)", release_year: 2019, duration_seconds: 167, image_url: "https://placehold.co/150x150/FF6347/ffffff?text=MEDUZA", genres: ["Electronic", "Pop"], moods: ["energized"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=uLHqpjW3aDs" },
+            { id: "s077", title: "The Box", artist: "Roddy Ricch", album_name: "Please Excuse Me for Being Antisocial", release_year: 2019, duration_seconds: 200, image_url: "https://placehold.co/150x150/A9A9A9/ffffff?text=Roddy+Ricch", genres: ["Rap", "Hip Hop"], moods: ["confident", "energized"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=9gkRJONZPSA" },
+            { id: "s078", title: "Circles", artist: "Post Malone", album_name: "Hollywood's Bleeding", release_year: 2019, duration_seconds: 215, image_url: "https://placehold.co/150x150/FFD700/000000?text=Post+Malone", genres: ["Pop", "Hip Hop"], moods: ["relaxed", "sad"], energy_level: 3, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=ttRz03c208g" },
+            { id: "s080", title: "drivers license", artist: "Olivia Rodrigo", album_name: "SOUR", release_year: 2021, duration_seconds: 242, image_url: "https://placehold.co/150x150/C0C0C0/000000?text=Olivia+Rodrigo", genres: ["Pop"], moods: ["sad"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=1j_XvebOg4c" },
+            { id: "s081", title: "Levitating", artist: "Dua Lipa", album_name: "Future Nostalgia", release_year: 2020, duration_seconds: 203, image_url: "https://placehold.co/150x150/FF1493/ffffff?text=Dua+Lipa", genres: ["Pop", "Electronic"], moods: ["happy", "energized"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=loSuMqwQA38" }, // Updated per user instruction
+            { id: "s083", title: "Heartless", artist: "The Weeknd", album_name: "After Hours", release_year: 2019, duration_seconds: 198, image_url: "https://placehold.co/150x150/4B0082/ffffff?text=The+Weeknd+3", genres: ["R&B", "Pop", "Hip Hop"], moods: ["energized"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=FatzlG2DNdY" },
+            { id: "s085", title: "Circles", artist: "Mac Miller", album_name: "Circles", release_year: 2020, duration_seconds: 300, image_url: "https://placehold.co/150x150/6A5ACD/ffffff?text=Mac+Miller", genres: ["Hip Hop", "R&B"], moods: ["sad", "relaxed"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=tmIO0eSAXrw" },
+            { id: "s086", title: "Good 4 u", artist: "Olivia Rodrigo", album_name: "SOUR", release_year: 2021, duration_seconds: 178, image_url: "https://placehold.co/150x150/C0C0C0/000000?text=Olivia+Rodrigo+2", genres: ["Pop", "Rock"], moods: ["angry", "energized"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=nsXwi67WgOo" },
+            { id: "s087", title: "Montero (Call Me By Your Name)", artist: "Lil Nas X", album_name: "MONTERO", release_year: 2021, duration_seconds: 137, image_url: "https://placehold.co/150x150/FF4500/ffffff?text=Lil+Nas+X+3", genres: ["Pop", "Hip Hop"], moods: ["energized"], energy_level: 5, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=kGcoKuK08-c" },
+            { id: "s088", title: "Peaches", artist: "Justin Bieber", album_name: "Justice", release_year: 2021, duration_seconds: 198, image_url: "https://placehold.co/150x150/FFD700/000000?text=Justin+Bieber", genres: ["Pop", "R&B"], moods: ["happy", "relaxed"], energy_level: 3, vibe_tags: ["vocal", "calming"], youtube_link: "https://www.youtube.com/watch?v=xuOOAQoDKN0" },
+            { id: "s089", title: "positions", artist: "Ariana Grande", album_name: "Positions", release_year: 2020, duration_seconds: 172, image_url: "https://placehold.co/150x150/FF69B4/ffffff?text=Ariana+Grande", genres: ["Pop", "R&B"], moods: ["romantic", "relaxed"], energy_level: 3, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=3o4ug07qJBI" },
+            { id: "s090", title: "Save Your Tears", artist: "The Weeknd", album_name: "After Hours", release_year: 2020, duration_seconds: 215, image_url: "https://placehold.co/150x150/feca57/000000?text=The+Weeknd+4", genres: ["Pop", "R&B", "Electronic"], moods: ["sad", "nostalgic"], energy_level: 3, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=HCq1OcAEAm0" },
+            { id: "s091", title: "Industry Baby", artist: "Lil Nas X", album_name: "MONTERO", release_year: 2021, duration_seconds: 212, image_url: "https://placehold.co/150x150/26de81/000000?text=Lil+Nas+X+4", genres: ["Hip Hop", "Rap", "Pop"], moods: ["energized"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=Ab6E2BsuLJ0" },
+            { id: "s092", title: "Kiss Me More", artist: "Doja Cat", album_name: "Planet Her", release_year: 2021, duration_seconds: 208, image_url: "https://placehold.co/150x150/FF00FF/ffffff?text=Doja+Cat", genres: ["Pop", "R&B"], moods: ["happy", "relaxed"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=mODc2nwKFbg" },
+            { id: "s093", title: "Leave The Door Open", artist: "Silk Sonic", album_name: "An Evening with Silk Sonic", release_year: 2021, duration_seconds: 262, image_url: "https://placehold.co/150x150/8B0000/ffffff?text=Silk+Sonic", genres: ["R&B", "Soul"], moods: ["romantic", "relaxed"], energy_level: 2, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=ho1RzYneMtM" },
+            { id: "s094", title: "Bad Habits", artist: "Ed Sheeran", album_name: "=", release_year: 2021, duration_seconds: 231, image_url: "https://placehold.co/150x150/FFD700/000000?text=Ed+Sheeran+4", genres: ["Pop", "Electronic"], moods: ["energized"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=YVdn_aGjZIQ" },
+            { id: "s096", title: "Mood", artist: "24kGoldn ft. Iann Dior", album_name: "El Dorado", release_year: 2020, duration_seconds: 140, image_url: "https://placehold.co/150x150/FF4500/ffffff?text=24kGoldn", genres: ["Hip Hop", "Pop", "Rap"], moods: ["happy", "energized"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=5bBcMt4mS2o" },
+            { id: "s101", title: "The Hills", artist: "The Weeknd", album_name: "Beauty Behind the Madness", release_year: 2015, duration_seconds: 242, image_url: "https://placehold.co/150x150/feca57/000000?text=The+Weeknd+5", genres: ["R&B", "Pop"], moods: ["sad"], energy_level: 3, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=OXrA-66bdiY" },
+            { id: "s104", title: "Take Care", artist: "Drake", album_name: "Take Care", release_year: 2011, duration_seconds: 279, image_url: "https://placehold.co/150x150/00008B/ffffff?text=Drake+6", genres: ["Hip Hop", "R&B"], moods: ["sad"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=7Qp5vcuMIlk" },
+            { id: "s106", title: "Castle on the Hill", artist: "Ed Sheeran", album_name: "÷ (Divide)", release_year: 2017, duration_seconds: 261, image_url: "https://placehold.co/150x150/FFD700/000000?text=Ed+Sheeran+6", genres: ["Pop", "Folk"], moods: ["nostalgic", "energized"], energy_level: 4, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=e8psHWLGDN4" },
+            { id: "s108", title: "Everything I Wanted", artist: "Billie Eilish", album_name: "Everything I Wanted (Single)", release_year: 2019, duration_seconds: 245, image_url: "https://placehold.co/150x150/2F4F4F/ffffff?text=Billie+Eilish+5", genres: ["Pop"], moods: ["sad"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=dJiIglhi3q0" },
+            { id: "s109", title: "Panini", artist: "Lil Nas X", album_name: "7 EP", release_year: 2019, duration_seconds: 115, image_url: "https://placehold.co/150x150/26de81/000000?text=Lil+Nas+X+5", genres: ["Hip Hop", "Pop"], moods: ["happy", "energized"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=OWl9p3oFKgg" },
+            { id: "s110", title: "Rodeo", artist: "Lil Nas X", album_name: "7 EP", release_year: 2019, duration_seconds: 158, image_url: "https://placehold.co/150x150/26de81/000000?text=Lil+Nas+X+6", genres: ["Hip Hop", "Pop"], moods: ["energized"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=KnZ8h3MRuYg" },
+            { id: "s111", title: "Highest in the Room", artist: "Travis Scott", album_name: "Highest in the Room (Single)", release_year: 2019, duration_seconds: 175, image_url: "https://placehold.co/150x150/1C2833/ffffff?text=Travis+Scott+3", genres: ["Hip Hop", "Rap"], moods: ["relaxed"], energy_level: 3, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=lhLN3r9pb64" },
+            { id: "s112", title: "Antidote", artist: "Travis Scott", album_name: "Rodeo", release_year: 2015, duration_seconds: 222, image_url: "https://placehold.co/150x150/1C2833/ffffff?text=Travis+Scott+4", genres: ["Hip Hop", "Rap"], moods: ["energized"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=uDAjINEp8H8" },
+            { id: "s114", title: "7 rings", artist: "Ariana Grande", album_name: "thank u, next", release_year: 2019, duration_seconds: 162, image_url: "https://placehold.co/150x150/FF69B4/ffffff?text=Ariana+Grande+4", genres: ["Pop", "R&B"], moods: ["confident", "happy"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=-yHoa4MR0W4" },
+            { id: "s116", title: "Better Now", artist: "Post Malone", album_name: "beerbongs & bentleys", release_year: 2018, duration_seconds: 220, image_url: "https://placehold.co/150x150/FFD700/000000?text=Post+Malone+6", genres: ["Pop", "Hip Hop"], moods: ["sad"], energy_level: 3, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=YnQwisL8BjU" },
+            { id: "s118", title: "Deja Vu", artist: "Olivia Rodrigo", album_name: "SOUR", release_year: 2021, duration_seconds: 215, image_url: "https://placehold.co/150x150/C0C0C0/000000?text=Olivia+Rodrigo+5", genres: ["Pop"], moods: ["sad", "nostalgic"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "" },
+            { id: "s120", title: "New Rules", artist: "Dua Lipa", album_name: "Dua Lipa", release_year: 2017, duration_seconds: 209, image_url: "https://placehold.co/150x150/FF1493/ffffff?text=Dua+Lipa+4", genres: ["Pop"], moods: ["confident", "upbeat"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=Qs0VniZIs_o" },
+            { id: "s122", title: "Say So", artist: "Doja Cat", album_name: "Hot Pink", release_year: 2019, duration_seconds: 238, image_url: "https://placehold.co/150x150/FF00FF/ffffff?text=Doja+Cat+3", genres: ["Pop", "R&B"], moods: ["relaxed"], energy_level: 3, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=uAYG46w1SCA" },
+            { id: "s124", title: "Smokin Out The Window", artist: "Silk Sonic", album_name: "An Evening with Silk Sonic", release_year: 2021, duration_seconds: 217, image_url: "https://placehold.co/150x150/8B0000/ffffff?text=Silk+Sonic+3", genres: ["R&B", "Soul"], moods: ["sad"], energy_level: 2, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=0CTja8rP03o" },
+            { id: "s126", title: "Valentino", artist: "24kGoldn", album_name: "Dropped Outta College", release_year: 2019, duration_seconds: 154, image_url: "https://placehold.co/150x150/FF4500/ffffff?text=24kGoldn+3", genres: ["Hip Hop", "Pop"], moods: ["confident", "upbeat"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=4LbIW6LUFHs" },
+            { id: "s127", title: "Happier", artist: "Marshmello & Bastille", album_name: "Happier (Single)", release_year: 2018, duration_seconds: 214, image_url: "https://placehold.co/150x150/00FFFF/000000?text=Marshmello", genres: ["Electronic", "Pop"], moods: ["sad", "energized"], energy_level: 4, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=RE87rQkXdNw" },
+            { id: "s129", title: "Drip Too Hard", artist: "Lil Baby & Gunna", album_name: "Drip Harder", release_year: 2018, duration_seconds: 130, image_url: "https://placehold.co/150x150/000000/ffffff?text=Lil+Baby", genres: ["Hip Hop", "Rap"], moods: ["energized", "confident"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=tBQ_Udt12OM" },
+            { id: "s130", title: "The Bigger Picture", artist: "Lil Baby", album_name: "The Bigger Picture (Single)", release_year: 2020, duration_seconds: 252, image_url: "https://placehold.co/150x150/000000/ffffff?text=Lil+Baby", genres: ["Hip Hop", "Rap"], moods: ["angry", "focused"], energy_level: 4, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=szJJEFxyrX8" },
+            { id: "s131", title: "Woah", artist: "Lil Baby", album_name: "My Turn", release_year: 2019, duration_seconds: 183, image_url: "https://placehold.co/150x150/000000/ffffff?text=Lil+Baby", genres: ["Hip Hop", "Rap"], moods: ["energized", "confident"], energy_level: 5, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=iVVbokygD-A" },
+            { id: "s132", title: "Pop Out", artist: "Polo G ft. Lil Tjay", album_name: "Die a Legend", release_year: 2019, duration_seconds: 165, image_url: "https://placehold.co/150x150/0000FF/FFFFFF?text=Polo+G", genres: ["Hip Hop", "Rap"], moods: ["confident", "energized", "upbeat"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=hLw4qUBfhVY" },
+            { id: "s133", title: "Said Sum", artist: "Moneybagg Yo", album_name: "Code Red", release_year: 2020, duration_seconds: 155, image_url: "https://placehold.co/150x150/1C1C1C/ffffff?text=Moneybagg+Yo", genres: ["Hip Hop", "Rap"], moods: ["confident", "energized"], energy_level: 5, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=EGayfVfvVW8" },
+            { id: "s134", title: "Suge", artist: "DaBaby", album_name: "Baby on Baby", release_year: 2019, duration_seconds: 160, image_url: "https://placehold.co/150x150/333333/ffffff?text=DaBaby", genres: ["Hip Hop", "Rap"], moods: ["energized", "confident"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=pikQHaUaG38" },
+            { id: "s135", title: "ROCKSTAR", artist: "DaBaby ft. Roddy Ricch", album_name: "Blame It on Baby", release_year: 2020, duration_seconds: 181, image_url: "https://placehold.co/150x150/333333/ffffff?text=DaBaby", genres: ["Hip Hop", "Rap"], moods: ["energized", "confident"], energy_level: 5, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=83xBPCw5hh4" },
+            { id: "s136", title: "BOP", artist: "DaBaby", album_name: "KIRK", release_year: 2019, duration_seconds: 159, image_url: "https://placehold.co/150x150/333333/ffffff?text=DaBaby", genres: ["Hip Hop", "Rap"], moods: ["energized", "happy"], energy_level: 5, vibe_tags: ["vocal", "upbeat"], youtube_link: "https://www.youtube.com/watch?v=MKr_idr2EwQ" },
+            { id: "s137", title: "Texas", artist: "BigXthaPlug", album_name: "Amar", release_year: 2022, duration_seconds: 165, image_url: "https://placehold.co/150x150/555555/ffffff?text=BigXthaPlug", genres: ["Hip Hop", "Rap"], moods: ["confident", "energized"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=nZhMTzFiTWI" },
+            { id: "s138", title: "Safehouse", artist: "BigXthaPlug", album_name: "Safehouse (Single)", release_year: 2023, duration_seconds: 180, image_url: "https://placehold.co/150x150/555555/ffffff?text=BigXthaPlug", genres: ["Hip Hop", "Rap"], moods: ["focused"], energy_level: 3, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=1t77q_Dykac" },
+            { id: "s139", title: "Outside Today", artist: "NBA YoungBoy", album_name: "Until Death Call My Name", release_year: 2018, duration_seconds: 150, image_url: "https://placehold.co/150x150/777777/ffffff?text=NBA+YoungBoy", genres: ["Hip Hop", "Rap"], moods: ["angry", "energized"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=H_iAC-ixWGg" },
+            { id: "s140", title: "Bandit", artist: "NBA YoungBoy", album_name: "Top", release_year: 2020, duration_seconds: 180, image_url: "https://placehold.co/150x150/777777/ffffff?text=NBA+YoungBoy", genres: ["Hip Hop", "Rap"], moods: ["angry"], energy_level: 4, vibe_tags: ["vocal", "lyrical_focus"], youtube_link: "https://www.youtube.com/watch?v=Sw5fNI400E4" },
+            { id: "s141", title: "No Smoke", artist: "NBA YoungBoy", album_name: "AI YoungBoy 2", release_year: 2019, duration_seconds: 175, image_url: "https://placehold.co/150x150/777777/ffffff?text=NBA+YoungBoy", genres: ["Hip Hop", "Rap"], moods: ["confident", "energized"], energy_level: 5, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=1wOGlMoUgj0" },
+            { id: "s142", title: "Valuable Pain", artist: "NBA YoungBoy", album_name: "Until Death Call My Name", release_year: 2018, duration_seconds: 170, image_url: "https://placehold.co/150x150/777777/ffffff?text=NBA+YoungBoy", genres: ["Hip Hop", "Rap"], moods: ["sad", "lyrical_focus"], energy_level: 2, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=U9W2rzos5HE" },
+            { id: "s143", title: "Kacey Talk", artist: "NBA YoungBoy", album_name: "Top", release_year: 2020, duration_seconds: 140, image_url: "https://placehold.co/150x150/777777/ffffff?text=NBA+YoungBoy", genres: ["Hip Hop", "Rap"], moods: ["happy", "upbeat"], energy_level: 4, vibe_tags: ["vocal"], youtube_link: "https://www.youtube.com/watch?v=IjhRTGFidC8" },
+            { id: "s430", title: "Yes Indeed", artist: "Lil Baby & Drake", album_name: "Harder Than Ever", release_year: 2018, duration_seconds: 165, image_url: "https://placehold.co/150x150/00FF00/000000?text=Lil+Baby", genres: ["Hip Hop", "Rap"], moods: ["energized", "confident"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=lr31Nq8B-Ho" },
+            { id: "s432", title: "Sum 2 Prove", artist: "Lil Baby", album_name: "My Turn", release_year: 2020, duration_seconds: 205, image_url: "https://placehold.co/150x150/00FF00/000000?text=Lil+Baby", genres: ["Hip Hop", "Rap"], moods: ["confident", "energized"], energy_level: 4, vibe_tags: ["vocal", "driving_beat"], youtube_link: "https://www.youtube.com/watch?v=cnwZcVAfHc4" },
+        ];
+
+        
+        const songMap = new Map();
+        songs.forEach(song => songMap.set(song.id, song));
+
+       
+        const newLinks = {
+            "s062": "https://www.youtube.com/watch?v=XnbsIl2BnWw", // Chanel
+            "s063": "https://www.youtube.com/watch?v=XZe_pV2rXuk", // Stressed Out
+            "s066": "https://www.youtube.com/watch?v=liTfD88dbCo", // Shape of You
+            "s067": "https://www.youtube.com/watch?v=LxxnSDmGUc4", // Hotline Bling
+            "s069": "https://www.youtube.com/watch?v=KrsqPE9SMxo", // Love Story
+            "s070": "https://www.youtube.com/watch?v=uOi_qHmKSK8", // The Sound of Silence
+            "s071": "https://www.youtube.com/watch?v=UVQREpxmN_U", // Happier Than Ever
+            "s072": "https://www.youtube.com/watch?v=rfTgO9rpqck", // Heat Waves
+            "s073": "https://www.youtube.com/watch?v=8WnxCTZNnmg", // Good Days
+            "s074": "https://www.youtube.com/watch?v=mgT0N3tMP74", // Counting Stars
+            "s076": "https://www.youtube.com/watch?v=b7kxtIGaNpw", // Lose Control
+            "s077": "https://www.youtube.com/watch?v=uLHqpjW3aDs", // The Box
+            "s078": "https://www.youtube.com/watch?v=9gkRJONZPSA", // Circles (Post Malone)
+            "s080": "https://www.youtube.com/watch?v=ttRz03c208g", // drivers license
+            "s081": "https://www.youtube.com/watch?v=1j_XvebOg4c", // Levitating
+            "s014": "https://www.youtube.com/watch?v=7UGOIMoJtB4", // Old Town Road
+            "s083": "https://www.youtube.com/watch?v=-uj9b9JCIJM", // Heartless
+            "s085": "https://www.youtube.com/watch?v=y9aowQ29G5Q", // Circles (Mac Miller)
+            "s086": "https://www.youtube.com/watch?v=tmIO0eSAXrw", // Good 4 u
+            "s087": "https://www.youtube.com/watch?v=nsXwi67WgOo", // Montero (Call Me By Your Name)
+            "s088": "https://www.youtube.com/watch?v=kGcoKuK08-c", // Peaches
+            "s089": "https://www.youtube.com/watch?v=xuOOAQoDKN0", // positions
+            "s090": "https://www.youtube.com/watch?v=3o4ug07qJBI", // Save Your Tears
+            "s091": "https://www.youtube.com/watch?v=HCq1OcAEAm0", // Industry Baby
+            "s092": "https://www.youtube.com/watch?v=Ab6E2BsuLJ0", // Kiss Me More
+            "s093": "https://www.youtube.com/watch?v=mODc2nwKFbg", // Leave The Door Open
+            "s094": "https://www.youtube.com/watch?v=ho1RzYneMtM", // Bad Habits
+            "s096": "https://www.youtube.com/watch?v=YVdn_aGjZIQ", // Mood
+            "s101": "https://www.youtube.com/watch?v=zxdSHfZFKkY", // The Hills
+            "s104": "https://www.youtube.com/watch?v=5bBcMt4mS2o", // Take Care
+            "s106": "https://www.youtube.com/watch?v=7Qp5vcuMIlk", // Castle on the Hill
+            "s108": "https://www.youtube.com/watch?v=qCTMq7xvdXU", // Everything I Wanted
+            "s109": "https://www.youtube.com/watch?v=5nL2ThdeacI", // Panini
+            "s110": "https://www.youtube.com/watch?v=dJiIglhi3q0", // Rodeo
+            "s111": "https://www.youtube.com/watch?v=OWl9p3oFKgg", // Highest in the Room
+            "s112": "https://www.youtube.com/watch?v=KnZ8h3MRuYg", // Antidote
+            "s114": "https://www.youtube.com/watch?v=uDAjINEp8H8", // 7 rings
+            "s116": "https://www.youtube.com/watch?v=-yHoa4MR0W4", // Better Now
+            "s118": "https://www.youtube.com/watch?v=YnQwisL8BjU", // deja vu
+            "s120": "https://www.youtube.com/watch?v=Qs0VniZIs_o", // New Rules
+            "s122": "https://www.youtube.com/watch?v=uAYG46w1SCA", // Say So
+            "s124": "https://www.youtube.com/watch?v=0CTja8rP03o", // Smokin Out The Window
+            "s126": "https://www.youtube.com/watch?v=4LbIW6LUFHs", // Valentino
+            "s127": "https://www.youtube.com/watch?v=RE87rQkXdNw", // Happier
+            "s129": "https://www.youtube.com/watch?v=tBQ_Udt12OM", // Drip Too Hard 
+            "s130": "https://www.youtube.com/watch?v=szJJEFxyrX8", // The Bigger Picture
+            "s131": "https://www.youtube.com/watch?v=iVVbokygD-A", // Woah
+            "s132": "https://www.youtube.com/watch?v=hLw4qUBfhVY", // Pop Out
+            "s133": "https://www.youtube.com/watch?v=EGayfVfvVW8", // Said Sum
+            "s134": "https://www.youtube.com/watch?v=pikQHaUaG38", // Suge
+            "s135": "https://www.youtube.com/watch?v=83xBPCw5hh4", // ROCKSTAR
+            "s136": "https://www.youtube.com/watch?v=MKr_idr2EwQ", // BOP
+            "s137": "https://www.youtube.com/watch?v=nZhMTzFiTWI", // Texas (BigXthaPlug)
+            "s138": "https://www.youtube.com/watch?v=1t77q_Dykac", // Safehouse
+            "s139": "https://www.youtube.com/watch?v=H_iAC-ixWGg", // Outside Today
+            "s140": "https://www.youtube.com/watch?v=Sw5fNI400E4", // Bandit (NBA YoungBoy)
+            "s141": "https://www.youtube.com/watch?v=1wOGlMoUgj0", // No Smoke
+            "s142": "https://www.youtube.com/watch?v=U9W2rzos5HE", // Valuable Pain
+            "s143": "https://www.youtube.com/watch?v=IjhRTGFidC8", // Kacey Talk
+            "s430": "https://www.youtube.com/watch?v=lr31Nq8B-Ho", // Yes Indeed
+            "s432": "https://www.youtube.com/watch?v=lr31Nq8B-Ho", // Sum 2 Prove
+            "s002": "https://www.youtube.com/watch?v=XwxLwG2_Sxk", // Blinding Lights
+            "s004": "https://www.youtube.com/watch?v=f2YWfeFRZO0", // Sicko Mode
+            "s006": "https://www.youtube.com/watch?v=-oCPAO3bp4Q", // Holocene
+            "s008": "https://www.youtube.com/watch?v=7-x3uD5z1bQ", // Watermelon Sugar
+            "s009": "https://www.youtube.com/watch?v=6xjJ2XIbGRk", // Master Of Puppets
+            "s010": "https://www.youtube.com/watch?v=XMPgVZtADtQ", // Thinking Out Loud
+            "s012": "https://www.youtube.com/watch?v=oica5jG7FpU", // The Thrill Is Gone
+            "s013": "https://www.youtube.com/watch?v=oQDDCgtRzcI", // One Dance
+            "s016": "https://www.youtube.com/watch?v=m1a_GqJf02M", // God's Plan
+            "s017": "https://www.youtube.com/watch?v=fjUGC8g4GOE", // Mask Off
+            "s018": "https://www.youtube.com/watch?v=yk3prd8GER4", // Bohemian Rhapsody
+            "s021": "https://www.youtube.com/watch?v=4-TbQnONe_w", // Bad Guy
+            "s023": "https://www.youtube.com/watch?v=ov4WobPqoSA", // Humble.
+
+        };
+
+        
+        for (const id in newLinks) {
+            if (songMap.has(id)) {
+                songMap.get(id).youtube_link = newLinks[id];
+            }
+        }
+
+        
+        const filteredSongs = [];
+        const seenSongKeys = new Set(); 
+
+        songMap.forEach(song => {
+            const lowerTitle = song.title.toLowerCase();
+            const lowerArtist = song.artist.toLowerCase();
+            const uniqueKey = `${lowerTitle}-${lowerArtist}`; 
+
+            
+            if (song.id === "s081") {
+                if (!seenSongKeys.has(uniqueKey)) {
+                    filteredSongs.push(song);
+                    seenSongKeys.add(uniqueKey);
+                }
+                return; 
+            }
+
+            
+            if (
+                lowerTitle.includes("remix") ||
+                lowerTitle.includes("acoustic") ||
+                lowerTitle.includes("(live)") ||
+                lowerTitle.includes("live version")
+            ) {
+                return; // Skip this song
+            }
+
+            
+            if (song.id === "s129" && seenSongKeys.has("drip too hard-lil baby & gunna")) {
+                return;
+            }
+
+            
+            if (!seenSongKeys.has(uniqueKey)) {
+                filteredSongs.push(song);
+                seenSongKeys.add(uniqueKey);
+            }
+        });
+
+        
+        songs = filteredSongs;
+
+        console.log("Updated songs array:", songs);
+    </script>
+</body>
+</html>
